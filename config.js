@@ -5,15 +5,15 @@ const config = {
     botName:    "𝐂𝐇𝐄𝐎𝐍 𝐁𝐎𝐓",
     botTag:     "@CHEON",
     botVersion: "2.0.0",
-    botDev:     "𝐋𝐎𝐘𝐃",
-    devNumber:  "4917672339436",
+    botDev:     "Mohamedlhachimi",
+    devNumber:  "212632670721",
 
     sessions:   "sessions",
-    botNumber:  "", // رقم البوت هنا ضروري 
+    botNumber:  "212632670721", // رقم البوت هنا ضروري 
 
 
     owner: [
-        "4917672339436", //رقم المطور
+        "212632670721", //رقم المطور
     ],
 
     ownerLid: [],
