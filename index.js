@@ -9,7 +9,7 @@ import fs, { readdirSync, unlinkSync, rmSync, existsSync, watch } from "fs"
 import yargs from "yargs"
 import { spawn } from "child_process"
 import syntaxerror from "syntax-error"
-import { fileURLToPath, pathToFileURL } from "url" // 🟢 إصلاح 1: إضافة pathToFileURL
+import { fileURLToPath, pathToFileURL } from "url"
 import { createRequire } from "module"
 import { platform } from "process"
 import { format } from "util"
@@ -37,7 +37,6 @@ const { PhoneNumberUtil } = pkg
 const phoneUtil = PhoneNumberUtil.getInstance()
 const { chain } = lodash
 
-// 🟢 إصلاح 2: رفع دالة isValidPhoneNumber إلى الأعلى لضمان عملها
 async function isValidPhoneNumber(number) {
     try {
         number = number.replace(/\s+/g, "")
@@ -200,39 +199,12 @@ const userDevicesCache = new NodeCache({ stdTTL: 300 })
 const { version } = await fetchLatestBaileysVersion()
 
 let phoneNumber = global.botNumber || process.env.BOT_NUMBER
-const methodCodeQR = process.argv.includes("qr")
-const methodCode = !!phoneNumber || process.argv.includes("code")
-const MethodMobile = process.argv.includes("mobile")
-
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-const question = (text) => new Promise((resolve) => rl.question(text, resolve))
-
-let opcion = "2" // 🟢 إصلاح 3: جعل النمط الافتراضي Pairing Code
-if (methodCodeQR) opcion = "1"
-
-if (!methodCodeQR && !methodCode && !existsSync(credsPath)) {
-    if (process.stdout.isTTY) {
-        do {
-            opcion = await question(
-                cheonPurple("🪻 اختر طريقة الاتصال:\n") +
-                cheonBlue("1. QR Code\n") +
-                cheonCyan("2. Pairing Code\n") +
-                "--> "
-            )
-            if (!/^[1-2]$/.test(opcion)) console.log(cheonRed("❌ اختر 1 أو 2 بس"))
-        } while (opcion !== "1" && opcion !== "2")
-    } else {
-        opcion = "2"
-    }
-}
-
-console.info = () => {}
 
 const connectionOptions = {
     version,
     logger: pino({ level: "silent" }),
-    printQRInTerminal: opcion == "1" || methodCodeQR,
-    mobile: MethodMobile,
+    printQRInTerminal: false,
+    mobile: false,
     browser: ["Ubuntu", "Chrome", "120.0.0"],
     auth: {
         creds: state.creds,
@@ -287,49 +259,35 @@ global.sendFromChannel = async function(jid, content, channelId = global.ch.main
 
 let pairingCodeShown = false
 
-if (!existsSync(credsPath) && (opcion === "2" || methodCode)) {
-    opcion = "2"
-    if (!conn.authState.creds.registered) {
-        let addNumber
-        if (phoneNumber) {
-            addNumber = phoneNumber.replace(/[^0-9]/g, "")
-            rl.close()
-        } else if (process.stdout.isTTY) {
-            do {
-                phoneNumber = await question(cheonCyan("\n  🪻 أدخل رقم الواتساب:\n--> "))
-                phoneNumber = phoneNumber.replace(/\D/g, "")
-                if (!phoneNumber.startsWith("+")) phoneNumber = `+${phoneNumber}`
-            } while (!await isValidPhoneNumber(phoneNumber))
-            addNumber = phoneNumber.replace(/\D/g, "")
-            rl.close()
-        } else {
-            console.log(cheonRed("❌ يلزم تحديد رقم الهاتف في config.js أو عبر متغيرات البيئة BOT_NUMBER"))
-        }
+if (!existsSync(credsPath) || !conn.authState.creds.registered) {
+    let cleanNumber = (phoneNumber || "").replace(/[^0-9]/g, "")
 
-        if (addNumber) {
-            global._pairingNumber = addNumber
-            const _pairingHandler = async (update) => {
-                if (pairingCodeShown) return
-                if (update.connection !== "connecting" && update.connection !== "open" && update.qr == null) return
-                conn.ev.off("connection.update", _pairingHandler)
-                await sleep(3000)
-                if (pairingCodeShown || conn.authState?.creds?.registered) return
-                try {
-                    pairingCodeShown = true
-                    console.log(cheonGold("  📱 جاري طلب كود الربط..."))
-                    let codeBot = await conn.requestPairingCode(global._pairingNumber)
-                    codeBot = codeBot?.match(/.{1,4}/g)?.join("-") || codeBot
-                    console.log(cheonGold(`\n=============================`))
-                    console.log(cheonGold(`  PAIRING CODE: ${codeBot}`))
-                    console.log(cheonGold(`=============================\n`))
-                    console.log(cheonPurple(`『 𝐂𝐇𝐄𝐎𝐍 𝐁𝐎𝐓 』`))
-                } catch (e) {
-                    console.log(cheonRed(`  ❌ فشل طلب الكود: ${e.message}`))
-                    pairingCodeShown = false
-                }
+    if (cleanNumber) {
+        global._pairingNumber = cleanNumber
+        const _pairingHandler = async (update) => {
+            if (pairingCodeShown) return
+            if (update.connection !== "connecting" && update.connection !== "open" && update.qr == null) return
+            conn.ev.off("connection.update", _pairingHandler)
+            await sleep(3000)
+            if (pairingCodeShown || conn.authState?.creds?.registered) return
+            try {
+                pairingCodeShown = true
+                console.log(cheonGold("  📱 جاري طلب كود الربط من واتساب..."))
+                let rawCode = await conn.requestPairingCode(global._pairingNumber)
+                let formattedCode = rawCode?.match(/.{1,4}/g)?.join("-") || rawCode
+
+                console.log(cheonGold(`\n=============================`))
+                console.log(cheonGreen(`  YOUR PAIRING CODE: ${formattedCode}`))
+                console.log(cheonGold(`=============================\n`))
+                console.log(cheonPurple(`『 𝐂𝐇𝐄𝐎𝐍 𝐁𝐎𝐓 』`))
+            } catch (e) {
+                console.log(cheonRed(`  ❌ فشل طلب الكود: ${e.message}`))
+                pairingCodeShown = false
             }
-            conn.ev.on("connection.update", _pairingHandler)
         }
+        conn.ev.on("connection.update", _pairingHandler)
+    } else {
+        console.log(cheonRed("  ❌ خطأ: لم يتم تحديد رقم البوت في config.js"))
     }
 }
 
@@ -376,7 +334,7 @@ async function joinChannels(sock) {
     for (const channelId of channels) {
         try {
             await sock.newsletterFollow(channelId)
-            console.log(cheonGreen(`تم: ${channelId.split("@")[0]}`))
+            console.log(cheonGreen(`تم متابعة: ${channelId.split("@")[0]}`))
         } catch (e) {
             console.log(cheonGray(`  ℹ️  القناة ${channelId.split("@")[0]}: ${e.message}`))
         }
@@ -403,17 +361,11 @@ async function connectionUpdate(update) {
         await global.reloadHandler(true)
     }
 
-    if (update.qr != 0 && update.qr != undefined) {
-        if (opcion == '1' || methodCodeQR) {
-            console.log(cheonCyan(`  🪻 امسح الـ QR Code`))
-        }
-    }
-
     if (connection === "open") {
         pairingAttempts = 0
         pairingCodeShown = false
         await joinChannels(conn)
-        console.log(cheonPurple("𝑻𝒉𝒆 𝒃𝒐𝒕 𝒊𝒔 𝒕𝒖𝒓𝒏𝒆𝒅 𝒐𝒏"))
+        console.log(cheonGreen("  ✅ تم الاتصال بنجاح! البوت يعمل الآن 🪻"))
     }
 
     if (connection === "close") {
