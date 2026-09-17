@@ -1,4 +1,3 @@
-
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1'
 process.env.UV_THREADPOOL_SIZE = 8
 
@@ -6,11 +5,11 @@ import "./config.js"
 import cfonts from "cfonts"
 import chalk from "chalk"
 import path, { join } from "path"
-import fs, { readdirSync, unlinkSync, rmSync, existsSync, watch, mkdirSync } from "fs"
+import fs, { readdirSync, unlinkSync, rmSync, existsSync, watch } from "fs"
 import yargs from "yargs"
 import { spawn } from "child_process"
 import syntaxerror from "syntax-error"
-import { fileURLToPath } from "url"
+import { fileURLToPath, pathToFileURL } from "url" // 🟢 إصلاح 1: إضافة pathToFileURL
 import { createRequire } from "module"
 import { platform } from "process"
 import { format } from "util"
@@ -38,6 +37,14 @@ const { PhoneNumberUtil } = pkg
 const phoneUtil = PhoneNumberUtil.getInstance()
 const { chain } = lodash
 
+// 🟢 إصلاح 2: رفع دالة isValidPhoneNumber إلى الأعلى لضمان عملها
+async function isValidPhoneNumber(number) {
+    try {
+        number = number.replace(/\s+/g, "")
+        if (number.startsWith("+521")) number = number.replace("+521", "+52")
+        return phoneUtil.isValidNumber(phoneUtil.parseAndKeepRawInput(number))
+    } catch { return false }
+}
 
 let lastRequestTime = {}
 const MIN_DELAY = 3000
@@ -55,7 +62,6 @@ async function waitForRateLimit(key = 'default') {
         lastRequestTime[key] = Date.now()
     })
 }
-
 
 function clearTmp() {
     const tmpDir = join(__dirname, 'tmp')
@@ -97,7 +103,6 @@ function purgeOldFiles() {
     }
 }
 
-
 global.__filename = function filename(pathURL = import.meta.url, rmPrefix = platform !== "win32") {
     return rmPrefix ? (/file:\/\/\//.test(pathURL) ? fileURLToPath(pathURL) : pathURL) : pathToFileURL(pathURL).toString()
 }
@@ -113,7 +118,6 @@ const __dirname = global.__dirname(import.meta.url)
 global.opts = new Object(yargs(process.argv.slice(2)).exitProcess(false).parse())
 global.prefix = new RegExp("^[#!./-]")
 
-// ألوان CHEON BOT - بنفسجي/أزرق
 const cheonBlue    = chalk.hex("#5B8DEF")
 const cheonPurple  = chalk.hex("#9B59B6")
 const cheonCyan    = chalk.hex("#00BCD4")
@@ -164,7 +168,6 @@ if (existsSync(credsPath)) {
     } catch { nukeSessionFolder() }
 }
 
-
 global.db = new Low(new JSONFile("database.json"))
 global.db.read()
 global.db.data = {
@@ -174,7 +177,6 @@ global.db.data = {
     settings: {},
     ...(global.db.data || {}),
 }
-
 
 global.loadDatabase = async function() {
     if (global.db.data) return
@@ -188,18 +190,16 @@ global.loadDatabase = async function() {
     }
 }
 
-
 setInterval(async () => {
     if (global.db.data) await global.db.write()
 }, 60 * 1000)
-
 
 const { state, saveCreds } = await useMultiFileAuthState(sessionDir)
 const msgRetryCounterCache = new NodeCache({ stdTTL: 300 })
 const userDevicesCache = new NodeCache({ stdTTL: 300 })
 const { version } = await fetchLatestBaileysVersion()
 
-let phoneNumber = global.botNumber
+let phoneNumber = global.botNumber || process.env.BOT_NUMBER
 const methodCodeQR = process.argv.includes("qr")
 const methodCode = !!phoneNumber || process.argv.includes("code")
 const MethodMobile = process.argv.includes("mobile")
@@ -207,19 +207,23 @@ const MethodMobile = process.argv.includes("mobile")
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
 const question = (text) => new Promise((resolve) => rl.question(text, resolve))
 
-let opcion
+let opcion = "2" // 🟢 إصلاح 3: جعل النمط الافتراضي Pairing Code
 if (methodCodeQR) opcion = "1"
 
 if (!methodCodeQR && !methodCode && !existsSync(credsPath)) {
-    do {
-        opcion = await question(
-            cheonPurple("🪻 اختر طريقة الاتصال:\n") +
-            cheonBlue("1. QR Code\n") +
-            cheonCyan("2. Pairing Code\n") +
-            "--> "
-        )
-        if (!/^[1-2]$/.test(opcion)) console.log(cheonRed("❌ اختر 1 أو 2 بس"))
-    } while (opcion !== "1" && opcion !== "2")
+    if (process.stdout.isTTY) {
+        do {
+            opcion = await question(
+                cheonPurple("🪻 اختر طريقة الاتصال:\n") +
+                cheonBlue("1. QR Code\n") +
+                cheonCyan("2. Pairing Code\n") +
+                "--> "
+            )
+            if (!/^[1-2]$/.test(opcion)) console.log(cheonRed("❌ اختر 1 أو 2 بس"))
+        } while (opcion !== "1" && opcion !== "2")
+    } else {
+        opcion = "2"
+    }
 }
 
 console.info = () => {}
@@ -277,11 +281,9 @@ global.sendFromChannel = async function(jid, content, channelId = global.ch.main
         }
         return await global.conn.sendMessage(jid, withContext)
     } catch (e) {
-       
         return await global.conn.sendMessage(jid, typeof content === 'string' ? { text: content } : content)
     }
 }
-
 
 let pairingCodeShown = false
 
@@ -292,7 +294,7 @@ if (!existsSync(credsPath) && (opcion === "2" || methodCode)) {
         if (phoneNumber) {
             addNumber = phoneNumber.replace(/[^0-9]/g, "")
             rl.close()
-        } else {
+        } else if (process.stdout.isTTY) {
             do {
                 phoneNumber = await question(cheonCyan("\n  🪻 أدخل رقم الواتساب:\n--> "))
                 phoneNumber = phoneNumber.replace(/\D/g, "")
@@ -300,31 +302,36 @@ if (!existsSync(credsPath) && (opcion === "2" || methodCode)) {
             } while (!await isValidPhoneNumber(phoneNumber))
             addNumber = phoneNumber.replace(/\D/g, "")
             rl.close()
+        } else {
+            console.log(cheonRed("❌ يلزم تحديد رقم الهاتف في config.js أو عبر متغيرات البيئة BOT_NUMBER"))
         }
 
-        global._pairingNumber = addNumber
-        const _pairingHandler = async (update) => {
-            if (pairingCodeShown) return
-            if (update.connection !== "connecting" && update.connection !== "open" && update.qr == null) return
-            conn.ev.off("connection.update", _pairingHandler)
-            await sleep(3000)
-            if (pairingCodeShown || conn.authState?.creds?.registered) return
-            try {
-                pairingCodeShown = true
-                console.log(cheonGold("  📱 جاري طلب كود الربط..."))
-                let codeBot = await conn.requestPairingCode(global._pairingNumber)
-                codeBot = codeBot?.match(/.{1,4}/g)?.join("-") || codeBot
-                console.log(cheonGold( `${codeBot}`))
-                console.log(cheonPurple(`『 𝐂𝐇𝐄𝐎𝐍 𝐁𝐎𝐓 』`))
-            } catch (e) {
-                console.log(cheonRed(`  ❌ فشل طلب الكود: ${e.message}`))
-                pairingCodeShown = false
+        if (addNumber) {
+            global._pairingNumber = addNumber
+            const _pairingHandler = async (update) => {
+                if (pairingCodeShown) return
+                if (update.connection !== "connecting" && update.connection !== "open" && update.qr == null) return
+                conn.ev.off("connection.update", _pairingHandler)
+                await sleep(3000)
+                if (pairingCodeShown || conn.authState?.creds?.registered) return
+                try {
+                    pairingCodeShown = true
+                    console.log(cheonGold("  📱 جاري طلب كود الربط..."))
+                    let codeBot = await conn.requestPairingCode(global._pairingNumber)
+                    codeBot = codeBot?.match(/.{1,4}/g)?.join("-") || codeBot
+                    console.log(cheonGold(`\n=============================`))
+                    console.log(cheonGold(`  PAIRING CODE: ${codeBot}`))
+                    console.log(cheonGold(`=============================\n`))
+                    console.log(cheonPurple(`『 𝐂𝐇𝐄𝐎𝐍 𝐁𝐎𝐓 』`))
+                } catch (e) {
+                    console.log(cheonRed(`  ❌ فشل طلب الكود: ${e.message}`))
+                    pairingCodeShown = false
+                }
             }
+            conn.ev.on("connection.update", _pairingHandler)
         }
-        conn.ev.on("connection.update", _pairingHandler)
     }
 }
-
 
 conn.isInit = false
 let isInit = true
@@ -363,7 +370,6 @@ global.reloadHandler = async function (restatConn) {
 
 let pairingAttempts = 0
 
-
 async function joinChannels(sock) {
     if (!global.ch) return
     const channels = Object.values(global.ch).filter(v => typeof v === "string" && v.endsWith("@newsletter"))
@@ -377,7 +383,6 @@ async function joinChannels(sock) {
         await sleep(1000)
     }
 }
-
 
 async function connectionUpdate(update) {
     const { connection, lastDisconnect, isNewLogin } = update
@@ -407,10 +412,7 @@ async function connectionUpdate(update) {
     if (connection === "open") {
         pairingAttempts = 0
         pairingCodeShown = false
-        const pluginCount = Object.keys(global.plugins || {}).length
-
         await joinChannels(conn)
-
         console.log(cheonPurple("𝑻𝒉𝒆 𝒃𝒐𝒕 𝒊𝒔 𝒕𝒖𝒓𝒏𝒆𝒅 𝒐𝒏"))
     }
 
@@ -457,12 +459,12 @@ async function connectionUpdate(update) {
     }
 }
 
-
 const pluginFolder = global.__dirname(join(__dirname, "./plugins/index"))
 const pluginFilter = (filename) => /\.js$/.test(filename)
 global.plugins = {}
 
 async function filesInit() {
+    if (!existsSync(pluginFolder)) return
     const files = readdirSync(pluginFolder).filter(pluginFilter)
     
     await Promise.allSettled(files.map(async (filename) => {
@@ -479,7 +481,6 @@ async function filesInit() {
 
 await filesInit()
 console.log(cheonCyan(`  🪻 ${Object.keys(global.plugins).length} بلوجين تم تحميلها`))
-
 
 const reloadDebounce = {}
 global.reload = async (_ev, filename) => {
@@ -510,7 +511,7 @@ global.reload = async (_ev, filename) => {
     }, 500)
 }
 
-watch(pluginFolder, global.reload)
+if (existsSync(pluginFolder)) watch(pluginFolder, global.reload)
 await global.reloadHandler()
 
 async function _quickTest() {
@@ -527,7 +528,6 @@ async function _quickTest() {
     console.log(cheonGray(`  📦 ffmpeg:${ffmpeg ? "✅" : "❌"} | ffprobe:${ffprobe ? "✅" : "❌"}`))
 }
 _quickTest()
-
 
 const tmpDir = join(__dirname, "tmp")
 if (!existsSync(tmpDir)) fs.mkdirSync(tmpDir)
@@ -580,14 +580,6 @@ setInterval(async () => {
         }
     }
 }, 5 * 60 * 1000)
-
-async function isValidPhoneNumber(number) {
-    try {
-        number = number.replace(/\s+/g, "")
-        if (number.startsWith("+521")) number = number.replace("+521", "+52")
-        return phoneUtil.isValidNumber(phoneUtil.parseAndKeepRawInput(number))
-    } catch { return false }
-}
 
 process.on("uncaughtException", (err) => console.error(cheonRed("  ⚠️  " + err.message)))
 process.on("unhandledRejection", (reason) => console.error(cheonRed("  ⚠️  " + reason)))
